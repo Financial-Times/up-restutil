@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/jawher/mow.cli"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -70,6 +71,9 @@ func putAllRest(baseurl string, idProperty string, conns int) error {
 	for {
 		var doc map[string]interface{}
 		if err := dec.Decode(&doc); err != nil {
+			if err == io.EOF {
+				break
+			}
 			return err
 		}
 		select {
