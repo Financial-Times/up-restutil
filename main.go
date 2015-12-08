@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/jawher/mow.cli"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -128,10 +129,15 @@ func (rp *resourcePutter) putAll(resources <-chan resource) error {
 		if err != nil {
 			return err
 		}
+		contents, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
 		resp.Body.Close()
 		if resp.StatusCode != 200 && resp.StatusCode != 202 {
-			return fmt.Errorf("http fail: %v for request %v", resp.Status, req)
+			return fmt.Errorf("http fail: %v :\n%s\n", resp.Status, contents)
 		}
+
 	}
 	return nil
 }
