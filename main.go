@@ -25,7 +25,7 @@ func main() {
 		idProp := cmd.StringArg("IDPROP", "", "property name of identity property")
 		baseUrl := cmd.StringArg("BASEURL", "", "base URL to PUT resources to")
 		cmd.Action = func() {
-			if err := putAllRest(*baseUrl, *idProp, 32); err != nil {
+			if err := putAllRest(*baseUrl, *idProp, 1024); err != nil {
 				log.Fatal(err)
 			}
 		}
