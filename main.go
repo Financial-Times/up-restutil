@@ -114,7 +114,7 @@ func (rp *resourcePutter) putAll(resources <-chan resource) error {
 		id := r[rp.idProperty]
 		idStr, ok := id.(string)
 		if !ok {
-			log.Printf("unable to extract id property from resource, skipping")
+			log.Println("unable to extract id property from resource, skipping")
 		}
 
 		msg, err := json.Marshal(r)
@@ -174,7 +174,7 @@ func getAllRest(baseURL string, throttle int) error {
 	}()
 
 	for msg := range messages {
-		fmt.Printf(msg)
+		fmt.Println(msg)
 	}
 	return nil
 }
