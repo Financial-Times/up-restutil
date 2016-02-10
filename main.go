@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/jawher/mow.cli"
 	"io"
@@ -26,6 +27,17 @@ func main() {
 		baseUrl := cmd.StringArg("BASEURL", "", "base URL to PUT resources to")
 		cmd.Action = func() {
 			if err := putAllRest(*baseUrl, *idProp, 1024); err != nil {
+				log.Fatal(err)
+			}
+		}
+
+	})
+
+	app.Command("dump-resources", "read json resources from stdin and PUT them to an endpoint", func(cmd *cli.Cmd) {
+		baseUrl := cmd.StringArg("BASEURL", "", "base URL to GET resources from. Must contain a __ids resource")
+		throttle := app.IntOpt("throttle", 10, "Limit request rate for resource GET requests (requests per second)")
+		cmd.Action = func() {
+			if err := getAllRest(*baseUrl, *throttle); err != nil {
 				log.Fatal(err)
 			}
 		}
@@ -140,6 +152,113 @@ func (rp *resourcePutter) putAll(resources <-chan resource) error {
 
 	}
 	return nil
+}
+
+func getAllRest(baseURL string, throttle int) error {
+	if baseURL == "" {
+		return errors.New("baseURL must be provided")
+	}
+	if !strings.HasSuffix(baseURL, "/") {
+		baseURL = baseURL + "/"
+	}
+	if throttle < 1 {
+		log.Fatalf("Invalid throttle %d", throttle)
+	}
+	ticker := time.NewTicker(time.Second / time.Duration(throttle))
+
+	messages := make(chan string, 128)
+
+	go func() {
+		fetchAll(baseURL, messages, ticker)
+		close(messages)
+	}()
+
+	for msg := range messages {
+		fmt.Printf(msg)
+	}
+	return nil
+}
+
+func fetchAll(baseURL string, messages chan<- string, ticker *time.Ticker) {
+	ids := make(chan string, 128)
+	go fetchIDList(baseURL, ids)
+
+	readers := 32
+
+	readWg := sync.WaitGroup{}
+
+	for i := 0; i < readers; i++ {
+		readWg.Add(1)
+		go func(i int) {
+			fetchMessages(baseURL, messages, ids, ticker)
+			readWg.Done()
+		}(i)
+	}
+
+	readWg.Wait()
+}
+
+func fetchIDList(baseURL string, ids chan<- string) {
+
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	u, err = u.Parse("./__ids")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	resp, err := httpClient.Get(u.String())
+	if err != nil {
+		panic(err)
+	}
+	defer resp.Body.Close()
+
+	type listEntry struct {
+		ID string `json:id`
+	}
+
+	var le listEntry
+	dec := json.NewDecoder(resp.Body)
+	for {
+		err = dec.Decode(&le)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			log.Fatal(err)
+		}
+		ids <- le.ID
+	}
+
+	close(ids)
+}
+
+func fetchMessages(baseURL string, messages chan<- string, ids <-chan string, ticker *time.Ticker) {
+	for id := range ids {
+		<-ticker.C
+		resp, err := httpClient.Get(strings.Join([]string{baseURL, id}, ""))
+		if err != nil {
+			panic(err)
+		}
+		data, err := ioutil.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			panic(err)
+		}
+		messages <- string(data)
+	}
+}
+
+var httpClient = &http.Client{
+	Transport: &http.Transport{
+		MaxIdleConnsPerHost: 32,
+		Dial: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).Dial,
+	},
 }
 
 type resource map[string]interface{}
