@@ -53,7 +53,16 @@ func main() {
 				log.Fatal(err)
 			}
 		}
+	})
 
+	app.Command("diff-ids", "show differences between the ids available in two RESTful collections", func(cmd *cli.Cmd) {
+		sourceUrl := cmd.StringArg("SOURCEURL", "", "base URL to GET resources from. Must contain a __ids resource")
+		destUrl := cmd.StringArg("DESTURL", "", "base URL to GET resources from. Must contain a __ids resource")
+		cmd.Action = func() {
+			if err := diffIDs(*sourceUrl, *destUrl); err != nil {
+				log.Fatal(err)
+			}
+		}
 	})
 
 	app.Run(os.Args)
@@ -110,6 +119,55 @@ func putAllRest(baseurl string, idProperty string, user string, pass string, con
 	default:
 		return nil
 	}
+
+}
+
+func diffIDs(sourceURL, destURL string) error {
+	sourceIDs := make(chan string)
+	go fetchIDList(sourceURL, sourceIDs)
+
+	destIDs := make(chan string)
+	go fetchIDList(destURL, destIDs)
+
+	sources := make(map[string]struct{})
+	dests := make(map[string]struct{})
+
+	for sourceIDs != nil || destIDs != nil {
+		select {
+		case sourceID, ok := <-sourceIDs:
+			if !ok {
+				sourceIDs = nil
+			} else {
+				sources[sourceID] = struct{}{}
+			}
+		case destID, ok := <-destIDs:
+			if !ok {
+				destIDs = nil
+			} else {
+				dests[destID] = struct{}{}
+			}
+		}
+	}
+
+	var output struct {
+		OnlyInSource      []string `json:"only-in-source"`
+		OnlyInDestination []string `json:"only-in-destination"`
+	}
+
+	for s, _ := range sources {
+		if _, found := dests[s]; !found {
+			output.OnlyInSource = append(output.OnlyInSource, s)
+		} else {
+			delete(dests, s)
+		}
+
+	}
+
+	for s, _ := range dests {
+		output.OnlyInDestination = append(output.OnlyInDestination, s)
+	}
+
+	return json.NewEncoder(os.Stdout).Encode(output)
 
 }
 
