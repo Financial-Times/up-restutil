@@ -35,7 +35,7 @@ func main() {
 
 	app.Command("dump-resources", "read json resources from stdin and PUT them to an endpoint", func(cmd *cli.Cmd) {
 		baseUrl := cmd.StringArg("BASEURL", "", "base URL to GET resources from. Must contain a __ids resource")
-		throttle := app.IntOpt("throttle", 10, "Limit request rate for resource GET requests (requests per second)")
+		throttle := cmd.IntOpt("throttle", 10, "Limit request rate for resource GET requests (requests per second)")
 		cmd.Action = func() {
 			if err := getAllRest(*baseUrl, *throttle); err != nil {
 				log.Fatal(err)
