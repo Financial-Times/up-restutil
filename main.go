@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/jawher/mow.cli"
 	"io"
 	"io/ioutil"
 	"log"
@@ -16,6 +15,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jawher/mow.cli"
+	"github.com/pborman/uuid"
+	"gopkg.in/mgo.v2/bson"
+	"github.com/kr/pretty"
 )
 
 func main() {
@@ -111,11 +115,7 @@ func putAllRest(baseurl string, idProperty string, conns int) error {
 
 func (rp *resourcePutter) putAll(resources <-chan resource) error {
 	for r := range resources {
-		id := r[rp.idProperty]
-		idStr, ok := id.(string)
-		if !ok {
-			log.Println("unable to extract id property from resource, skipping")
-		}
+		idStr := getIDString(r[rp.idProperty])
 
 		msg, err := json.Marshal(r)
 		if err != nil {
@@ -248,6 +248,17 @@ func fetchMessages(baseURL string, messages chan<- string, ids <-chan string, ti
 			panic(err)
 		}
 		messages <- string(data)
+	}
+}
+
+func getIDString(idValue interface{}) string {
+	if idString, ok := idValue.(string); ok {
+		return idString
+	} else if binaryId, ok := idValue.(bson.Binary); ok {
+		return uuid.UUID(binaryId.Data).String()
+	} else {
+		fmt.Printf("UUID field is in an unknown format!\n %# v", pretty.Formatter(idValue))
+		return ""
 	}
 }
 
