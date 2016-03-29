@@ -146,7 +146,7 @@ func (rp *resourcePutter) putAll(resources <-chan resource) error {
 			return err
 		}
 		resp.Body.Close()
-		if resp.StatusCode != 200 && resp.StatusCode != 202 {
+		if resp.StatusCode > 299 {
 			return fmt.Errorf("http fail: %v :\n%s\n", resp.Status, contents)
 		}
 
