@@ -25,8 +25,10 @@ func main() {
 	app.Command("put-resources", "read json resources from stdin and PUT them to an endpoint", func(cmd *cli.Cmd) {
 		idProp := cmd.StringArg("IDPROP", "", "property name of identity property")
 		baseUrl := cmd.StringArg("BASEURL", "", "base URL to PUT resources to")
+		user := cmd.StringOpt("user", "", "user for basic auth")
+		pass := cmd.StringOpt("pass", "", "password for basic auth")
 		cmd.Action = func() {
-			if err := putAllRest(*baseUrl, *idProp, 128); err != nil {
+			if err := putAllRest(*baseUrl, *idProp, *user, *pass, 128); err != nil {
 				log.Fatal(err)
 			}
 		}
@@ -47,7 +49,7 @@ func main() {
 	app.Run(os.Args)
 }
 
-func putAllRest(baseurl string, idProperty string, conns int) error {
+func putAllRest(baseurl string, idProperty string, user string, pass string, conns int) error {
 
 	dec := json.NewDecoder(os.Stdin)
 
@@ -63,7 +65,7 @@ func putAllRest(baseurl string, idProperty string, conns int) error {
 		},
 	}
 
-	rp := &resourcePutter{baseurl, idProperty, httpClient}
+	rp := &resourcePutter{baseurl, idProperty, user, pass, httpClient}
 
 	errs := make(chan error, 1)
 
@@ -136,6 +138,9 @@ func (rp *resourcePutter) putAll(resources <-chan resource) error {
 		req, err := http.NewRequest("PUT", u.String(), bytes.NewReader(msg))
 		if err != nil {
 			return err
+		}
+		if rp.user != "" && rp.pass != "" {
+			req.SetBasicAuth(rp.user, rp.pass)
 		}
 		resp, err := rp.client.Do(req)
 		if err != nil {
@@ -266,5 +271,7 @@ type resource map[string]interface{}
 type resourcePutter struct {
 	baseUrl    string
 	idProperty string
+	user       string
+	pass       string
 	client     *http.Client
 }
