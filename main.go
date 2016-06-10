@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/jawher/mow.cli"
+	"golang.org/x/net/proxy"
 	"io"
 	"io/ioutil"
 	"log"
@@ -22,6 +23,8 @@ func main() {
 
 	app := cli.App("up-restutil", "A RESTful resource utility")
 
+	socksProxy := app.StringOpt("socks-proxy", "", "Use specified SOCKS proxy (e.g. localhost:2323)")
+
 	app.Command("put-resources", "read json resources from stdin and PUT them to an endpoint", func(cmd *cli.Cmd) {
 		user := cmd.StringOpt("user", "", "user for basic auth")
 		pass := cmd.StringOpt("pass", "", "password for basic auth")
@@ -29,6 +32,10 @@ func main() {
 		idProp := cmd.StringArg("IDPROP", "", "property name of identity property")
 		baseUrl := cmd.StringArg("BASEURL", "", "base URL to PUT resources to")
 		cmd.Action = func() {
+			if *socksProxy != "" {
+				dialer, _ := proxy.SOCKS5("tcp", *socksProxy, nil, proxy.Direct)
+				transport.Dial = dialer.Dial
+			}
 			if err := putAllRest(*baseUrl, *idProp, *user, *pass, *concurrency); err != nil {
 				log.Fatal(err)
 			}
