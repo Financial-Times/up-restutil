@@ -55,17 +55,9 @@ func putAllRest(baseurl string, idProperty string, user string, pass string, con
 
 	docs := make(chan resource)
 
-	httpClient := &http.Client{
-		Transport: &http.Transport{
-			MaxIdleConnsPerHost: conns,
-			Dial: (&net.Dialer{
-				Timeout:   30 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).Dial,
-		},
-	}
+	transport.MaxIdleConnsPerHost = conns
 
-	rp := &resourcePutter{baseurl, idProperty, user, pass, httpClient}
+	rp := &resourcePutter{baseurl, idProperty, user, pass}
 
 	errs := make(chan error, 1)
 
@@ -142,7 +134,7 @@ func (rp *resourcePutter) putAll(resources <-chan resource) error {
 		if rp.user != "" && rp.pass != "" {
 			req.SetBasicAuth(rp.user, rp.pass)
 		}
-		resp, err := rp.client.Do(req)
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			return err
 		}
@@ -189,6 +181,8 @@ func fetchAll(baseURL string, messages chan<- string, ticker *time.Ticker) {
 	go fetchIDList(baseURL, ids)
 
 	readers := 32
+
+	transport.MaxIdleConnsPerHost = readers
 
 	readWg := sync.WaitGroup{}
 
@@ -256,15 +250,19 @@ func fetchMessages(baseURL string, messages chan<- string, ids <-chan string, ti
 	}
 }
 
-var httpClient = &http.Client{
-	Transport: &http.Transport{
+var (
+	transport = &http.Transport{
 		MaxIdleConnsPerHost: 32,
 		Dial: (&net.Dialer{
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).Dial,
-	},
-}
+	}
+
+	httpClient = &http.Client{
+		Transport: transport,
+	}
+)
 
 type resource map[string]interface{}
 
@@ -273,5 +271,4 @@ type resourcePutter struct {
 	idProperty string
 	user       string
 	pass       string
-	client     *http.Client
 }
