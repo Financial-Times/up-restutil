@@ -23,12 +23,13 @@ func main() {
 	app := cli.App("up-restutil", "A RESTful resource utility")
 
 	app.Command("put-resources", "read json resources from stdin and PUT them to an endpoint", func(cmd *cli.Cmd) {
-		idProp := cmd.StringArg("IDPROP", "", "property name of identity property")
-		baseUrl := cmd.StringArg("BASEURL", "", "base URL to PUT resources to")
 		user := cmd.StringOpt("user", "", "user for basic auth")
 		pass := cmd.StringOpt("pass", "", "password for basic auth")
+		concurrency := cmd.IntOpt("concurrency", 16, "number of concurrent requests to use")
+		idProp := cmd.StringArg("IDPROP", "", "property name of identity property")
+		baseUrl := cmd.StringArg("BASEURL", "", "base URL to PUT resources to")
 		cmd.Action = func() {
-			if err := putAllRest(*baseUrl, *idProp, *user, *pass, 128); err != nil {
+			if err := putAllRest(*baseUrl, *idProp, *user, *pass, *concurrency); err != nil {
 				log.Fatal(err)
 			}
 		}
