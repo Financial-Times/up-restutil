@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/jawher/mow.cli"
+	"golang.org/x/net/proxy"
 	"io"
 	"io/ioutil"
 	"log"
@@ -22,13 +23,20 @@ func main() {
 
 	app := cli.App("up-restutil", "A RESTful resource utility")
 
+	socksProxy := app.StringOpt("socks-proxy", "", "Use specified SOCKS proxy (e.g. localhost:2323)")
+
 	app.Command("put-resources", "read json resources from stdin and PUT them to an endpoint", func(cmd *cli.Cmd) {
-		idProp := cmd.StringArg("IDPROP", "", "property name of identity property")
-		baseUrl := cmd.StringArg("BASEURL", "", "base URL to PUT resources to")
 		user := cmd.StringOpt("user", "", "user for basic auth")
 		pass := cmd.StringOpt("pass", "", "password for basic auth")
+		concurrency := cmd.IntOpt("concurrency", 16, "number of concurrent requests to use")
+		idProp := cmd.StringArg("IDPROP", "", "property name of identity property")
+		baseUrl := cmd.StringArg("BASEURL", "", "base URL to PUT resources to")
 		cmd.Action = func() {
-			if err := putAllRest(*baseUrl, *idProp, *user, *pass, 128); err != nil {
+			if *socksProxy != "" {
+				dialer, _ := proxy.SOCKS5("tcp", *socksProxy, nil, proxy.Direct)
+				transport.Dial = dialer.Dial
+			}
+			if err := putAllRest(*baseUrl, *idProp, *user, *pass, *concurrency); err != nil {
 				log.Fatal(err)
 			}
 		}
@@ -55,17 +63,9 @@ func putAllRest(baseurl string, idProperty string, user string, pass string, con
 
 	docs := make(chan resource)
 
-	httpClient := &http.Client{
-		Transport: &http.Transport{
-			MaxIdleConnsPerHost: conns,
-			Dial: (&net.Dialer{
-				Timeout:   30 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).Dial,
-		},
-	}
+	transport.MaxIdleConnsPerHost = conns
 
-	rp := &resourcePutter{baseurl, idProperty, user, pass, httpClient}
+	rp := &resourcePutter{baseurl, idProperty, user, pass}
 
 	errs := make(chan error, 1)
 
@@ -142,7 +142,7 @@ func (rp *resourcePutter) putAll(resources <-chan resource) error {
 		if rp.user != "" && rp.pass != "" {
 			req.SetBasicAuth(rp.user, rp.pass)
 		}
-		resp, err := rp.client.Do(req)
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			return err
 		}
@@ -189,6 +189,8 @@ func fetchAll(baseURL string, messages chan<- string, ticker *time.Ticker) {
 	go fetchIDList(baseURL, ids)
 
 	readers := 32
+
+	transport.MaxIdleConnsPerHost = readers
 
 	readWg := sync.WaitGroup{}
 
@@ -256,15 +258,19 @@ func fetchMessages(baseURL string, messages chan<- string, ids <-chan string, ti
 	}
 }
 
-var httpClient = &http.Client{
-	Transport: &http.Transport{
+var (
+	transport = &http.Transport{
 		MaxIdleConnsPerHost: 32,
 		Dial: (&net.Dialer{
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).Dial,
-	},
-}
+	}
+
+	httpClient = &http.Client{
+		Transport: transport,
+	}
+)
 
 type resource map[string]interface{}
 
@@ -273,5 +279,4 @@ type resourcePutter struct {
 	idProperty string
 	user       string
 	pass       string
-	client     *http.Client
 }
