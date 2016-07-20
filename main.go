@@ -65,6 +65,17 @@ func main() {
 		}
 	})
 
+	app.Command("sync-ids", "show differences between the ids available in two RESTful collections", func(cmd *cli.Cmd) {
+		deletes := cmd.BoolOpt("deletes", false, "delete from destination those resources not present in source")
+		sourceUrl := cmd.StringArg("SOURCEURL", "", "base URL to GET resources from. Must contain a __ids resource")
+		destUrl := cmd.StringArg("DESTURL", "", "base URL to GET resources from. Must contain a __ids resource")
+		cmd.Action = func() {
+			if err := syncIDs(*sourceUrl, *destUrl, *deletes); err != nil {
+				log.Fatal(err)
+			}
+		}
+	})
+
 	app.Run(os.Args)
 }
 
@@ -169,6 +180,138 @@ func diffIDs(sourceURL, destURL string) error {
 
 	return json.NewEncoder(os.Stdout).Encode(output)
 
+}
+
+func syncIDs(sourceURL, destURL string, deletes bool) error {
+	sourceIDs := make(chan string)
+	go fetchIDList(sourceURL, sourceIDs)
+
+	destIDs := make(chan string)
+	go fetchIDList(destURL, destIDs)
+
+	sources := make(map[string]struct{})
+	dests := make(map[string]struct{})
+
+	for sourceIDs != nil || destIDs != nil {
+		select {
+		case sourceID, ok := <-sourceIDs:
+			if !ok {
+				sourceIDs = nil
+			} else {
+				sources[sourceID] = struct{}{}
+			}
+		case destID, ok := <-destIDs:
+			if !ok {
+				destIDs = nil
+			} else {
+				dests[destID] = struct{}{}
+			}
+		}
+	}
+
+	var output struct {
+		Created int `json:"created"`
+		Deleted int `json:"created"`
+	}
+
+	for s, _ := range sources {
+		if _, found := dests[s]; !found {
+			if err := doCopy(sourceURL, destURL, s); err != nil {
+				return err
+			}
+			output.Created++
+		} else {
+			delete(dests, s)
+		}
+
+	}
+
+	if deletes {
+		for s, _ := range dests {
+			if err := doDelete(destURL, s); err != nil {
+				return err
+			}
+			output.Deleted++
+		}
+	}
+
+	return json.NewEncoder(os.Stdout).Encode(output)
+
+}
+
+func doCopy(sourceURL, destURL, id string) error {
+
+	su := sourceURL
+	if !strings.HasSuffix(su, "/") {
+		su = su + "/"
+	}
+
+	sreq, err := http.NewRequest("GET", fmt.Sprintf("%s%s", su, id), nil)
+	if err != nil {
+		return err
+	}
+	sreq.Header.Set("User-Agent", useragent)
+	sresp, err := httpClient.Do(sreq)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		io.Copy(ioutil.Discard, sresp.Body)
+		_ = sresp.Body.Close()
+	}()
+
+	if sresp.StatusCode != http.StatusOK {
+		return fmt.Errorf("error copying resource: %s", sresp.Status)
+	}
+
+	du := destURL
+	if !strings.HasSuffix(du, "/") {
+		du = du + "/"
+	}
+
+	dreq, err := http.NewRequest("PUT", fmt.Sprintf("%s%s", du, id), sresp.Body)
+	if err != nil {
+		return err
+	}
+	dreq.Header.Set("User-Agent", useragent)
+	dresp, err := httpClient.Do(dreq)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		io.Copy(ioutil.Discard, dresp.Body)
+		_ = dresp.Body.Close()
+	}()
+	if dresp.StatusCode != http.StatusOK {
+		return fmt.Errorf("error copying resource: %s", dresp.Status)
+	}
+
+	return nil
+}
+
+func doDelete(destURL, id string) error {
+
+	du := destURL
+	if !strings.HasSuffix(du, "/") {
+		du = du + "/"
+	}
+
+	dreq, err := http.NewRequest("DELETE", fmt.Sprintf("%s%s", du, id), nil)
+	if err != nil {
+		return err
+	}
+	dresp, err := httpClient.Do(dreq)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		io.Copy(ioutil.Discard, dresp.Body)
+		_ = dresp.Body.Close()
+	}()
+	if dresp.StatusCode != http.StatusOK {
+		return fmt.Errorf("error deleting resource: %s", dresp.Status)
+	}
+	return nil
 }
 
 func (rp *resourcePutter) putAll(resources <-chan resource) error {
