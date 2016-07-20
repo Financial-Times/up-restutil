@@ -19,6 +19,8 @@ import (
 	"time"
 )
 
+const useragent = "up-restutil"
+
 func main() {
 
 	app := cli.App("up-restutil", "A RESTful resource utility")
@@ -139,6 +141,8 @@ func (rp *resourcePutter) putAll(resources <-chan resource) error {
 		if err != nil {
 			return err
 		}
+		req.Header.Set("User-Agent", useragent)
+
 		if rp.user != "" && rp.pass != "" {
 			req.SetBasicAuth(rp.user, rp.pass)
 		}
@@ -216,7 +220,12 @@ func fetchIDList(baseURL string, ids chan<- string) {
 		log.Fatal(err)
 	}
 
-	resp, err := httpClient.Get(u.String())
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		panic(err)
+	}
+	req.Header.Set("User-Agent", useragent)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		panic(err)
 	}
@@ -245,7 +254,12 @@ func fetchIDList(baseURL string, ids chan<- string) {
 func fetchMessages(baseURL string, messages chan<- string, ids <-chan string, ticker *time.Ticker) {
 	for id := range ids {
 		<-ticker.C
-		resp, err := httpClient.Get(strings.Join([]string{baseURL, id}, ""))
+		req, err := http.NewRequest("GET", strings.Join([]string{baseURL, id}, ""), nil)
+		if err != nil {
+			panic(err)
+		}
+		req.Header.Set("User-Agent", useragent)
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			panic(err)
 		}
