@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/jawher/mow.cli"
-	"golang.org/x/net/proxy"
 	"io"
 	"io/ioutil"
 	"log"
@@ -17,6 +15,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jawher/mow.cli"
+	"golang.org/x/net/proxy"
+	"gopkg.in/cheggaaa/pb.v1"
 )
 
 const useragent = "up-restutil"
@@ -214,25 +216,35 @@ func syncIDs(sourceURL, destURL string, deletes bool) error {
 		Deleted int `json:"created"`
 	}
 
-	for s, _ := range sources {
-		if _, found := dests[s]; !found {
-			if err := doCopy(sourceURL, destURL, s); err != nil {
-				return err
-			}
-			output.Created++
-		} else {
-			delete(dests, s)
-		}
+	if len(sources) > 0 {
+		bar := pb.StartNew(len(sources))
 
+		for s, _ := range sources {
+			if _, found := dests[s]; !found {
+				if err := doCopy(sourceURL, destURL, s); err != nil {
+					return err
+				}
+				output.Created++
+				bar.Increment()
+			} else {
+				delete(dests, s)
+			}
+
+		}
+		bar.FinishPrint("Done creates")
 	}
 
-	if deletes {
+	if deletes && len(dests) > 0 {
+		bar := pb.StartNew(len(dests))
+
 		for s, _ := range dests {
 			if err := doDelete(destURL, s); err != nil {
 				return err
 			}
 			output.Deleted++
+			bar.Increment()
 		}
+		bar.FinishPrint("Done deletes")
 	}
 
 	return json.NewEncoder(os.Stdout).Encode(output)
