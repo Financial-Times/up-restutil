@@ -216,16 +216,32 @@ func syncIDs(sourceURL, destURL string, deletes bool) error {
 		Deleted int `json:"created"`
 	}
 
+	sem := make(chan struct{}, 64)
+	for i := 0; i < cap(sem); i++ {
+		sem <- struct{}{}
+	}
+
+	errs := make(chan error, 1)
+
 	if len(sources) > 0 {
 		bar := pb.StartNew(len(sources))
 
 		for s, _ := range sources {
 			if _, found := dests[s]; !found {
-				if err := doCopy(sourceURL, destURL, s); err != nil {
+				select {
+				case err := <-errs:
 					return err
+				default:
+					<-sem
+					go func() {
+						defer func() { sem <- struct{}{} }()
+						if err := doCopy(sourceURL, destURL, s); err != nil {
+							errs <- err
+						}
+					}()
+					output.Created++
+					bar.Increment()
 				}
-				output.Created++
-				bar.Increment()
 			} else {
 				delete(dests, s)
 			}
@@ -487,7 +503,7 @@ func fetchMessages(baseURL string, messages chan<- string, ids <-chan string, ti
 
 var (
 	transport = &http.Transport{
-		MaxIdleConnsPerHost: 32,
+		MaxIdleConnsPerHost: 128,
 		Dial: (&net.Dialer{
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
