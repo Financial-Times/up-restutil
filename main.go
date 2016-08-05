@@ -167,6 +167,9 @@ func diffIDs(sourceURL, destURL string) error {
 		OnlyInDestination []string `json:"only-in-destination"`
 	}
 
+	output.OnlyInSource = []string{}
+	output.OnlyInDestination = []string{}
+
 	for s, _ := range sources {
 		if _, found := dests[s]; !found {
 			output.OnlyInSource = append(output.OnlyInSource, s)
