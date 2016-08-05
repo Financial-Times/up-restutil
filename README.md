@@ -43,11 +43,10 @@ up-restutil diff-ids http://localhost/foo/ http://localhost/bar/
 
 ```
 
+# The 'sync-ids' sub-command
+Creates or deletes resources in destination collection based on differences from source collection.  The content is not compared, only the existence.  An __ids endpoint is required.
 
-# More examples:
-
-Copy all resources from http://localhost/foo/ to http://localhost/bar/ limiting the reads to 20 requests per second
 ```
-up-restutil dump-resources --throttle=20 http://localhost/foo/ | up-restutil put-resources uuid http://localhost/foo/
+up-restutil sync-ids http://localhost/foo/ http://localhost/bar/
 ```
-
+Progress is shown during sync.  By default, deletion is not enabled in the destination during syncing, only creation. To enable delete, use --deletes=true 
