@@ -18,15 +18,35 @@ GETs all resources from a RESTful collection. This expects a __ids resource that
 
 To manage the load on the endpoint, the number of GET requests per second can be limited.
 
-
 ```
 up-restutil dump-resources --throttle=20 http://localhost/foo/
 ```
 
-# More examples:
+# The 'diff-ids' sub-command
+Shows the differences between existence of resources in two collections using their __ids endpoints.
 
-Copy all resources from http://localhost/foo/ to http://localhost/bar/ limiting the reads to 20 requests per second
 ```
-up-restutil dump-resources --throttle=20 http://localhost/foo/ | up-restutil put-resources uuid http://localhost/foo/
+up-restutil diff-ids http://localhost/foo/ http://localhost/bar/
 ```
 
+ Output is in the form :
+```
+{
+  "only-in-source": [
+    "a0233405-4a7f-3fea-9c9e-7681eb714a00",
+    "760c7ddf-59d0-3ddc-aa15-7d410d5133b3"
+  ],
+  "only-in-destination": [
+    "79eb0533-27e3-3282-9cac-e8ee083f7a9d"
+  ]
+}
+
+```
+
+# The 'sync-ids' sub-command
+Creates or deletes resources in destination collection based on differences from source collection.  The content is not compared, only the existence.  An __ids endpoint is required.
+
+```
+up-restutil sync-ids http://localhost/foo/ http://localhost/bar/
+```
+Progress is shown during sync.  By default, deletion is not enabled in the destination during syncing, only creation. To enable delete, use --deletes=true 
