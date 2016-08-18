@@ -29,7 +29,7 @@ func main() {
 
 	socksProxy := app.StringOpt("socks-proxy", "", "Use specified SOCKS proxy (e.g. localhost:2323)")
 
-	app.Command("put-resources", "read json resources from stdin and PUT them to an endpoint", func(cmd *cli.Cmd) {
+	app.Command("put-resources", "Read JSON resources from stdin and PUT them to an endpoint", func(cmd *cli.Cmd) {
 		user := cmd.StringOpt("user", "", "user for basic auth")
 		pass := cmd.StringOpt("pass", "", "password for basic auth")
 		concurrency := cmd.IntOpt("concurrency", 16, "number of concurrent requests to use")
@@ -47,7 +47,7 @@ func main() {
 
 	})
 
-	app.Command("dump-resources", "read json resources from stdin and PUT them to an endpoint", func(cmd *cli.Cmd) {
+	app.Command("dump-resources", "Read JSON resources from an endpoint and dump them to stdout", func(cmd *cli.Cmd) {
 		baseUrl := cmd.StringArg("BASEURL", "", "base URL to GET resources from. Must contain a __ids resource")
 		throttle := cmd.IntOpt("throttle", 10, "Limit request rate for resource GET requests (requests per second)")
 		cmd.Action = func() {
@@ -57,7 +57,7 @@ func main() {
 		}
 	})
 
-	app.Command("diff-ids", "show differences between the ids available in two RESTful collections", func(cmd *cli.Cmd) {
+	app.Command("diff-ids", "Show differences between the ids available in two RESTful collections", func(cmd *cli.Cmd) {
 		sourceUrl := cmd.StringArg("SOURCEURL", "", "base URL to GET resources from. Must contain a __ids resource")
 		destUrl := cmd.StringArg("DESTURL", "", "base URL to GET resources from. Must contain a __ids resource")
 		cmd.Action = func() {
@@ -67,7 +67,7 @@ func main() {
 		}
 	})
 
-	app.Command("sync-ids", "show differences between the ids available in two RESTful collections", func(cmd *cli.Cmd) {
+	app.Command("sync-ids", "Sync resources between two RESTul JSON collections, using PUT and DELETE on the destination as needed", func(cmd *cli.Cmd) {
 		deletes := cmd.BoolOpt("deletes", false, "delete from destination those resources not present in source")
 		sourceUrl := cmd.StringArg("SOURCEURL", "", "base URL to GET resources from. Must contain a __ids resource")
 		destUrl := cmd.StringArg("DESTURL", "", "base URL to GET resources from. Must contain a __ids resource")
