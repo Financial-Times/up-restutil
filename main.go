@@ -32,6 +32,7 @@ func main() {
 	app.Command("put-resources", "Read JSON resources from stdin and PUT them to an endpoint", func(cmd *cli.Cmd) {
 		user := cmd.StringOpt("user", "", "user for basic auth")
 		pass := cmd.StringOpt("pass", "", "password for basic auth")
+		dumpFailed := cmd.BoolOpt("dumpfailed", false, "dump failed resources to stdout, instead of exiting on failure")
 		concurrency := cmd.IntOpt("concurrency", 16, "number of concurrent requests to use")
 		idProp := cmd.StringArg("IDPROP", "", "property name of identity property")
 		baseUrl := cmd.StringArg("BASEURL", "", "base URL to PUT resources to")
@@ -40,7 +41,7 @@ func main() {
 				dialer, _ := proxy.SOCKS5("tcp", *socksProxy, nil, proxy.Direct)
 				transport.Dial = dialer.Dial
 			}
-			if err := putAllRest(*baseUrl, *idProp, *user, *pass, *concurrency); err != nil {
+			if err := putAllRest(*baseUrl, *idProp, *user, *pass, *concurrency, *dumpFailed); err != nil {
 				log.Fatal(err)
 			}
 		}
@@ -81,7 +82,7 @@ func main() {
 	app.Run(os.Args)
 }
 
-func putAllRest(baseurl string, idProperty string, user string, pass string, conns int) error {
+func putAllRest(baseurl string, idProperty string, user string, pass string, conns int, dumpFailed bool) error {
 
 	dec := json.NewDecoder(os.Stdin)
 
@@ -93,11 +94,39 @@ func putAllRest(baseurl string, idProperty string, user string, pass string, con
 
 	errs := make(chan error, 1)
 
+	var failChan chan []byte
+
+	failwg := sync.WaitGroup{}
+
+	if dumpFailed {
+		failChan = make(chan []byte)
+
+		failwg.Add(1)
+		go func() {
+			defer failwg.Done()
+
+			for resource := range failChan {
+				_, err := os.Stdout.Write(resource)
+				if err == nil {
+					_, err = io.WriteString(os.Stdout, "\n")
+				}
+				if err != nil {
+					select {
+					case errs <- err:
+					default:
+					}
+					return
+				}
+			}
+		}()
+	}
+
 	wg := sync.WaitGroup{}
+
 	for i := 0; i < conns; i++ {
 		wg.Add(1)
 		go func() {
-			if err := rp.putAll(docs); err != nil {
+			if err := rp.putAll(docs, failChan); err != nil {
 				select {
 				case errs <- err:
 				default:
@@ -125,6 +154,11 @@ func putAllRest(baseurl string, idProperty string, user string, pass string, con
 	close(docs)
 
 	wg.Wait()
+
+	if dumpFailed {
+		close(failChan)
+		failwg.Wait()
+	}
 
 	select {
 	case err := <-errs:
@@ -345,7 +379,7 @@ func doDelete(destURL, id string) error {
 	return nil
 }
 
-func (rp *resourcePutter) putAll(resources <-chan resource) error {
+func (rp *resourcePutter) putAll(resources <-chan resource, failChan chan []byte) error {
 	for r := range resources {
 		id := r[rp.idProperty]
 		idStr, ok := id.(string)
@@ -388,7 +422,11 @@ func (rp *resourcePutter) putAll(resources <-chan resource) error {
 		}
 		resp.Body.Close()
 		if resp.StatusCode > 299 {
-			return fmt.Errorf("http fail: %v :\n%s\n", resp.Status, contents)
+			if failChan != nil {
+				failChan <- msg
+			} else {
+				return fmt.Errorf("http fail: %v :\n%s\n", resp.Status, contents)
+			}
 		}
 
 	}
