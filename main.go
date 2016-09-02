@@ -32,7 +32,7 @@ func main() {
 	app.Command("put-resources", "Read JSON resources from stdin and PUT them to an endpoint", func(cmd *cli.Cmd) {
 		user := cmd.StringOpt("user", "", "user for basic auth")
 		pass := cmd.StringOpt("pass", "", "password for basic auth")
-		dumpFailed := cmd.BoolOpt("dumpfailed", false, "dump failed resources to stdout, instead of exiting on failure")
+		dumpFailed := cmd.BoolOpt("dump-failed", false, "dump failed resources to stdout, instead of exiting on failure")
 		concurrency := cmd.IntOpt("concurrency", 16, "number of concurrent requests to use")
 		idProp := cmd.StringArg("IDPROP", "", "property name of identity property")
 		baseUrl := cmd.StringArg("BASEURL", "", "base URL to PUT resources to")
