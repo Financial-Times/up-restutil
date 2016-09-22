@@ -403,33 +403,39 @@ func (rp *resourcePutter) putAll(resources <-chan resource, failChan chan []byte
 		if err != nil {
 			return err
 		}
-		req, err := http.NewRequest("PUT", u.String(), bytes.NewReader(msg))
-		if err != nil {
+		err = rp.put(u.String(), bytes.NewReader(msg))
+		if failChan != nil {
+			failChan <- msg
+		} else {
 			return err
 		}
-		req.Header.Set("User-Agent", useragent)
-
-		if rp.user != "" && rp.pass != "" {
-			req.SetBasicAuth(rp.user, rp.pass)
-		}
-		resp, err := httpClient.Do(req)
-		if err != nil {
-			return err
-		}
-		contents, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			return err
-		}
-		resp.Body.Close()
-		if resp.StatusCode > 299 {
-			if failChan != nil {
-				failChan <- msg
-			} else {
-				return fmt.Errorf("http fail: %v :\n%s\n", resp.Status, contents)
-			}
-		}
-
 	}
+	return nil
+}
+
+func (rp *resourcePutter) put(url string, data io.Reader) error {
+	req, err := http.NewRequest("PUT", url, data)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", useragent)
+
+	if rp.user != "" && rp.pass != "" {
+		req.SetBasicAuth(rp.user, rp.pass)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	contents, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode > 299 {
+		return fmt.Errorf("http fail: %v :\n%s\n", resp.Status, contents)
+	}
+
 	return nil
 }
 
