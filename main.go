@@ -404,10 +404,12 @@ func (rp *resourcePutter) putAll(resources <-chan resource, failChan chan []byte
 			return err
 		}
 		err = rp.put(u.String(), bytes.NewReader(msg))
-		if failChan != nil {
-			failChan <- msg
-		} else {
-			return err
+		if err != nil {
+			if failChan != nil {
+				failChan <- msg
+			} else {
+				return err
+			}
 		}
 	}
 	return nil
