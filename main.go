@@ -270,12 +270,12 @@ func syncIDs(sourceURL, destURL string, deletes bool) error {
 					return err
 				default:
 					<-sem
-					go func() {
+					go func(id string) {
 						defer func() { sem <- struct{}{} }()
-						if err := doCopy(sourceURL, destURL, s); err != nil {
+						if err := doCopy(sourceURL, destURL, id); err != nil {
 							errs <- err
 						}
-					}()
+					}(s)
 					output.Created++
 					bar.Increment()
 				}
