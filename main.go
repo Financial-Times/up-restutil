@@ -261,6 +261,7 @@ func syncIDs(sourceURL, destURL string, deletes bool) error {
 	errs := make(chan error, 1)
 
 	if len(sources) > 0 {
+		var wg sync.WaitGroup
 		bar := pb.StartNew(len(sources))
 
 		for s, _ := range sources {
@@ -270,8 +271,12 @@ func syncIDs(sourceURL, destURL string, deletes bool) error {
 					return err
 				default:
 					<-sem
+					wg.Add(1)
 					go func(id string) {
-						defer func() { sem <- struct{}{} }()
+						defer func() {
+							sem <- struct{}{}
+							wg.Done()
+						}()
 						if err := doCopy(sourceURL, destURL, id); err != nil {
 							errs <- err
 						}
@@ -284,6 +289,7 @@ func syncIDs(sourceURL, destURL string, deletes bool) error {
 			}
 
 		}
+		wg.Wait()
 		bar.FinishPrint("Done creates")
 	}
 
