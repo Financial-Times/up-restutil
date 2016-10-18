@@ -277,8 +277,18 @@ func syncIDs(sourceURL, destURL string, deletes bool) error {
 							sem <- struct{}{}
 							wg.Done()
 						}()
-						if err := doCopy(sourceURL, destURL, id); err != nil {
-							errs <- err
+						retry := 2 //TODO parameterize
+						for {
+							if err := doCopy(sourceURL, destURL, id); err != nil {
+								if retry == 0 {
+									errs <- err
+								} else {
+									retry--
+									time.Sleep(time.Second * 2)
+								}
+							} else {
+								return
+							}
 						}
 					}(s)
 					output.Created++
