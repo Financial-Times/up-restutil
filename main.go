@@ -35,13 +35,13 @@ func main() {
 		dumpFailed := cmd.BoolOpt("dump-failed", false, "dump failed resources to stdout, instead of exiting on failure")
 		concurrency := cmd.IntOpt("concurrency", 16, "number of concurrent requests to use")
 		idProp := cmd.StringArg("IDPROP", "", "property name of identity property")
-		baseUrl := cmd.StringArg("BASEURL", "", "base URL to PUT resources to")
+		baseURL := cmd.StringArg("BASEURL", "", "base URL to PUT resources to")
 		cmd.Action = func() {
 			if *socksProxy != "" {
 				dialer, _ := proxy.SOCKS5("tcp", *socksProxy, nil, proxy.Direct)
 				transport.Dial = dialer.Dial
 			}
-			if err := putAllRest(*baseUrl, *idProp, *user, *pass, *concurrency, *dumpFailed); err != nil {
+			if err := putAllRest(*baseURL, *idProp, *user, *pass, *concurrency, *dumpFailed); err != nil {
 				log.Fatal(err)
 			}
 		}
@@ -49,31 +49,46 @@ func main() {
 	})
 
 	app.Command("dump-resources", "Read JSON resources from an endpoint and dump them to stdout", func(cmd *cli.Cmd) {
-		baseUrl := cmd.StringArg("BASEURL", "", "base URL to GET resources from. Must contain a __ids resource")
+		baseURL := cmd.StringArg("BASEURL", "", "base URL to GET resources from. Must contain a __ids resource")
 		throttle := cmd.IntOpt("throttle", 10, "Limit request rate for resource GET requests (requests per second)")
 		cmd.Action = func() {
-			if err := getAllRest(*baseUrl, *throttle); err != nil {
+			if err := getAllRest(*baseURL, *throttle); err != nil {
 				log.Fatal(err)
 			}
 		}
 	})
 
 	app.Command("diff-ids", "Show differences between the ids available in two RESTful collections", func(cmd *cli.Cmd) {
-		sourceUrl := cmd.StringArg("SOURCEURL", "", "base URL to GET resources from. Must contain a __ids resource")
-		destUrl := cmd.StringArg("DESTURL", "", "base URL to GET resources from. Must contain a __ids resource")
+		sourceURL := cmd.StringArg("SOURCEURL", "", "base URL to GET resources from. Must contain a __ids resource")
+		destURL := cmd.StringArg("DESTURL", "", "base URL to GET resources from. Must contain a __ids resource")
 		cmd.Action = func() {
-			if err := diffIDs(*sourceUrl, *destUrl); err != nil {
+			if err := diffIDs(*sourceURL, *destURL); err != nil {
 				log.Fatal(err)
 			}
 		}
 	})
 
-	app.Command("sync-ids", "Sync resources between two RESTul JSON collections, using PUT and DELETE on the destination as needed", func(cmd *cli.Cmd) {
+	app.Command("sync-ids", "Sync resources between two RESTful JSON collections, using PUT and DELETE on the destination as needed", func(cmd *cli.Cmd) {
 		deletes := cmd.BoolOpt("deletes", false, "delete from destination those resources not present in source")
-		sourceUrl := cmd.StringArg("SOURCEURL", "", "base URL to GET resources from. Must contain a __ids resource")
-		destUrl := cmd.StringArg("DESTURL", "", "base URL to GET resources from. Must contain a __ids resource")
+		concurrency := cmd.IntOpt("concurrency", 32, "number of concurrent requests to use")
+		minExecTime := cmd.IntOpt("minExecTime", 0, "minimum amount of seconds it will take to execute one sync operation")
+		retries := cmd.IntOpt("retries", 2, "number of times a sync should be retried if it fails")
+		sourceFile := cmd.StringOpt("sourceFile", "", "path to the file the contains the source ids")
+		destFile := cmd.StringOpt("destFile", "", "path to the file that contains the destination ids")
+		sourceURL := cmd.StringArg("SOURCEURL", "", "base URL to GET resources from. Must contain a __ids resource")
+		destURL := cmd.StringArg("DESTURL", "", "base URL to GET resources from. Must contain a __ids resource")
 		cmd.Action = func() {
-			if err := syncIDs(*sourceUrl, *destUrl, *deletes); err != nil {
+			config := &syncConfig{
+				destIdsRetriever:   getIDListRetriever(*destFile, *destURL),
+				sourceIdsRetriever: getIDListRetriever(*sourceFile, *sourceURL),
+				deletes:            *deletes,
+				maxConcurrentReqs:  *concurrency,
+				minExecTime:        *minExecTime,
+				destURL:            *destURL,
+				sourceURL:          *sourceURL,
+				retries:            *retries,
+			}
+			if err := syncIDs(config); err != nil {
 				log.Fatal(err)
 			}
 		}
@@ -82,7 +97,7 @@ func main() {
 	app.Run(os.Args)
 }
 
-func putAllRest(baseurl string, idProperty string, user string, pass string, conns int, dumpFailed bool) error {
+func putAllRest(baseURL string, idProperty string, user string, pass string, conns int, dumpFailed bool) error {
 
 	dec := json.NewDecoder(os.Stdin)
 
@@ -90,7 +105,7 @@ func putAllRest(baseurl string, idProperty string, user string, pass string, con
 
 	transport.MaxIdleConnsPerHost = conns
 
-	rp := &resourcePutter{baseurl, idProperty, user, pass}
+	rp := &resourcePutter{baseURL, idProperty, user, pass}
 
 	errs := make(chan error, 1)
 
@@ -204,7 +219,7 @@ func diffIDs(sourceURL, destURL string) error {
 	output.OnlyInSource = []string{}
 	output.OnlyInDestination = []string{}
 
-	for s, _ := range sources {
+	for s := range sources {
 		if _, found := dests[s]; !found {
 			output.OnlyInSource = append(output.OnlyInSource, s)
 		} else {
@@ -213,7 +228,7 @@ func diffIDs(sourceURL, destURL string) error {
 
 	}
 
-	for s, _ := range dests {
+	for s := range dests {
 		output.OnlyInDestination = append(output.OnlyInDestination, s)
 	}
 
@@ -221,12 +236,24 @@ func diffIDs(sourceURL, destURL string) error {
 
 }
 
-func syncIDs(sourceURL, destURL string, deletes bool) error {
-	sourceIDs := make(chan string)
-	go fetchIDList(sourceURL, sourceIDs)
+type syncConfig struct {
+	sourceURL          string
+	destURL            string
+	sourceIdsRetriever IDListRetriever
+	destIdsRetriever   IDListRetriever
+	maxConcurrentReqs  int
+	minExecTime        int
+	retries            int
+	deletes            bool
+}
 
+func syncIDs(config *syncConfig) error {
+	errChan := make(chan error)
+	defer close(errChan)
+	sourceIDs := make(chan string)
+	go config.sourceIdsRetriever.Retrieve(sourceIDs, errChan)
 	destIDs := make(chan string)
-	go fetchIDList(destURL, destIDs)
+	go config.destIdsRetriever.Retrieve(destIDs, errChan)
 
 	sources := make(map[string]struct{})
 	dests := make(map[string]struct{})
@@ -245,6 +272,8 @@ func syncIDs(sourceURL, destURL string, deletes bool) error {
 			} else {
 				dests[destID] = struct{}{}
 			}
+		case err := <-errChan:
+			return err
 		}
 	}
 
@@ -253,7 +282,7 @@ func syncIDs(sourceURL, destURL string, deletes bool) error {
 		Deleted int `json:"created"`
 	}
 
-	sem := make(chan struct{}, 64)
+	sem := make(chan struct{}, config.maxConcurrentReqs)
 	for i := 0; i < cap(sem); i++ {
 		sem <- struct{}{}
 	}
@@ -264,7 +293,7 @@ func syncIDs(sourceURL, destURL string, deletes bool) error {
 		var wg sync.WaitGroup
 		bar := pb.StartNew(len(sources))
 
-		for s, _ := range sources {
+		for s := range sources {
 			if _, found := dests[s]; !found {
 				select {
 				case err := <-errs:
@@ -277,24 +306,28 @@ func syncIDs(sourceURL, destURL string, deletes bool) error {
 							sem <- struct{}{}
 							wg.Done()
 						}()
-						retry := 2 //TODO parameterize
+						minExecTime := time.After(time.Second * time.Duration(config.minExecTime))
+						retry := config.retries
 						for {
-							if err := doCopy(sourceURL, destURL, id); err != nil {
+							if err := doCopy(config.sourceURL, config.destURL, id); err != nil {
 								if retry == 0 {
 									errs <- err
+									break
 								} else {
 									retry--
 									time.Sleep(time.Second * 2)
 								}
 							} else {
-								return
+								break
 							}
 						}
+						<-minExecTime
 					}(s)
 					output.Created++
 					bar.Increment()
 				}
 			} else {
+				bar.Increment()
 				delete(dests, s)
 			}
 
@@ -303,11 +336,11 @@ func syncIDs(sourceURL, destURL string, deletes bool) error {
 		bar.FinishPrint("Done creates")
 	}
 
-	if deletes && len(dests) > 0 {
+	if config.deletes && len(dests) > 0 {
 		bar := pb.StartNew(len(dests))
 
-		for s, _ := range dests {
-			if err := doDelete(destURL, s); err != nil {
+		for s := range dests {
+			if err := doDelete(config.destURL, s); err != nil {
 				return err
 			}
 			output.Deleted++
@@ -317,7 +350,6 @@ func syncIDs(sourceURL, destURL string, deletes bool) error {
 	}
 
 	return json.NewEncoder(os.Stdout).Encode(output)
-
 }
 
 func doCopy(sourceURL, destURL, id string) error {
@@ -355,6 +387,7 @@ func doCopy(sourceURL, destURL, id string) error {
 		return err
 	}
 	dreq.Header.Set("User-Agent", useragent)
+	dreq.Header.Set("Content-type", "application/json")
 	dresp, err := httpClient.Do(dreq)
 	if err != nil {
 		return err
@@ -407,7 +440,7 @@ func (rp *resourcePutter) putAll(resources <-chan resource, failChan chan []byte
 		if err != nil {
 			return err
 		}
-		b := rp.baseUrl
+		b := rp.baseURL
 		if !strings.HasSuffix(b, "/") {
 			b = b + "/"
 		}
@@ -526,7 +559,7 @@ func fetchIDList(baseURL string, ids chan<- string) {
 	defer resp.Body.Close()
 
 	type listEntry struct {
-		ID string `json:id`
+		ID string `json:"id"`
 	}
 
 	var le listEntry
@@ -583,7 +616,7 @@ var (
 type resource map[string]interface{}
 
 type resourcePutter struct {
-	baseUrl    string
+	baseURL    string
 	idProperty string
 	user       string
 	pass       string
