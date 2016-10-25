@@ -78,9 +78,9 @@ func main() {
 		sourceURL := cmd.StringArg("SOURCEURL", "", "base URL to GET resources from. Must contain a __ids resource")
 		destURL := cmd.StringArg("DESTURL", "", "base URL to GET resources from. Must contain a __ids resource")
 		cmd.Action = func() {
-			config := &syncConfig{
-				destIdsRetriever:   getIDListRetriever(*destFile, *destURL),
-				sourceIdsRetriever: getIDListRetriever(*sourceFile, *sourceURL),
+			service := &syncService{
+				destIDsRetriever:   getIDListRetriever(*destFile, *destURL),
+				sourceIDsRetriever: getIDListRetriever(*sourceFile, *sourceURL),
 				deletes:            *deletes,
 				maxConcurrentReqs:  *concurrency,
 				minExecTime:        *minExecTime,
@@ -88,7 +88,7 @@ func main() {
 				sourceURL:          *sourceURL,
 				retries:            *retries,
 			}
-			if err := syncIDs(config); err != nil {
+			if err := syncIDs(service); err != nil {
 				log.Fatal(err)
 			}
 		}
@@ -236,24 +236,24 @@ func diffIDs(sourceURL, destURL string) error {
 
 }
 
-type syncConfig struct {
+type syncService struct {
+	sourceIDsRetriever IDListRetriever
+	destIDsRetriever   IDListRetriever
 	sourceURL          string
 	destURL            string
-	sourceIdsRetriever IDListRetriever
-	destIdsRetriever   IDListRetriever
 	maxConcurrentReqs  int
 	minExecTime        int
 	retries            int
 	deletes            bool
 }
 
-func syncIDs(config *syncConfig) error {
+func syncIDs(service *syncService) error {
 	errChan := make(chan error)
 	defer close(errChan)
 	sourceIDs := make(chan string)
-	go config.sourceIdsRetriever.Retrieve(sourceIDs, errChan)
+	go service.sourceIDsRetriever.Retrieve(sourceIDs, errChan)
 	destIDs := make(chan string)
-	go config.destIdsRetriever.Retrieve(destIDs, errChan)
+	go service.destIDsRetriever.Retrieve(destIDs, errChan)
 
 	sources := make(map[string]struct{})
 	dests := make(map[string]struct{})
@@ -282,7 +282,7 @@ func syncIDs(config *syncConfig) error {
 		Deleted int `json:"created"`
 	}
 
-	sem := make(chan struct{}, config.maxConcurrentReqs)
+	sem := make(chan struct{}, service.maxConcurrentReqs)
 	for i := 0; i < cap(sem); i++ {
 		sem <- struct{}{}
 	}
@@ -306,10 +306,10 @@ func syncIDs(config *syncConfig) error {
 							sem <- struct{}{}
 							wg.Done()
 						}()
-						minExecTime := time.After(time.Second * time.Duration(config.minExecTime))
-						retry := config.retries
+						minExecTime := time.After(time.Second * time.Duration(service.minExecTime))
+						retry := service.retries
 						for {
-							if err := doCopy(config.sourceURL, config.destURL, id); err != nil {
+							if err := doCopy(service.sourceURL, service.destURL, id); err != nil {
 								if retry == 0 {
 									errs <- err
 									break
@@ -336,11 +336,11 @@ func syncIDs(config *syncConfig) error {
 		bar.FinishPrint("Done creates")
 	}
 
-	if config.deletes && len(dests) > 0 {
+	if service.deletes && len(dests) > 0 {
 		bar := pb.StartNew(len(dests))
 
 		for s := range dests {
-			if err := doDelete(config.destURL, s); err != nil {
+			if err := doDelete(service.destURL, s); err != nil {
 				return err
 			}
 			output.Deleted++

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/h2non/gock"
 	"github.com/nbio/st"
+	"github.com/stretchr/testify/assert"
 	"net/http"
 	"os"
 	"testing"
@@ -58,7 +59,7 @@ func TestFileBasedRetrieve_Success(t *testing.T) {
 }
 
 func TestFileBasedRetrieve_FileOpenFailure(t *testing.T) {
-	expectedError := errors.New("ERROR - Failed opening file=non_existing_file: open non_existing_file: The system cannot find the file specified.")
+	expectedError := "ERROR - Failed opening file=non_existing_file:"
 	retriever := newFileBasedIDListRetriever("non_existing_file")
 	var idsChan = make(chan string)
 	var errChan = make(chan error)
@@ -72,9 +73,7 @@ func TestFileBasedRetrieve_FileOpenFailure(t *testing.T) {
 				idsChan = nil
 			}
 		case actualError := <-errChan:
-			if expectedError != actualError {
-				st.Expect(t, expectedError, actualError)
-			}
+			assert.Contains(t, actualError.Error(), expectedError)
 			return
 		}
 	}
