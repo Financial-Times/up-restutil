@@ -1,5 +1,7 @@
 ## up-restutil
 
+[![Circle CI](https://circleci.com/gh/Financial-Times/up-restutil/tree/master.png?style=shield)](https://circleci.com/gh/Financial-Times/up-restutil/tree/master)
+
 A utility for performing various (typically batched) RESTful operations with JSON resources.
 
 # Installation
