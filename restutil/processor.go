@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	log "github.com/Sirupsen/logrus"
+	"golang.org/x/net/context"
+	"golang.org/x/time/rate"
 	"gopkg.in/cheggaaa/pb.v1"
 	"io"
 	"io/ioutil"
@@ -31,6 +33,134 @@ var (
 		Transport: Transport,
 	}
 )
+
+const (
+	BufferSize = 24
+)
+
+type binaryMsg struct {
+	id   *string
+	body *io.ReadCloser
+	ct   string
+}
+
+func PutAllBinaryRest(baseFromURL string, baseToURL string, user string, pass string, conns int, throttle int, dumpFailed bool) (err error) {
+	msgs := make(chan *binaryMsg, 128)
+	var failChan chan []byte
+	rp := &resourcePutter{
+		baseURL: baseToURL,
+		user:    user,
+		pass:    pass,
+	}
+
+	errs := make(chan error)
+	failwg := sync.WaitGroup{}
+	if dumpFailed {
+		failChan = make(chan []byte, conns*2)
+		failwg.Add(1)
+		go func() {
+			defer failwg.Done()
+
+			for resource := range failChan {
+				_, err := os.Stdout.Write(resource)
+				if err == nil {
+					_, err = io.WriteString(os.Stdout, "\n")
+				}
+				if err != nil {
+					select {
+					case errs <- err:
+					default:
+					}
+					return
+				}
+			}
+		}()
+
+	}
+
+	var wg sync.WaitGroup
+
+	for i := 0; i < conns; i++ {
+		wg.Add(1)
+		go rp.putAllBinary(msgs, failChan, &wg)
+	}
+	getAllBinary(baseFromURL, throttle, conns, msgs)
+	wg.Wait()
+
+	if dumpFailed {
+		close(failChan)
+		failwg.Wait()
+	}
+
+	select {
+	case err := <-errs:
+		return err
+	default:
+		return nil
+	}
+}
+
+func getAllBinary(baseURL string, throttle int, conns int, msgs chan *binaryMsg) (err error) {
+	ids := make(chan *string, conns*BufferSize)
+	go fetchIDList(baseURL, ids)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var wg sync.WaitGroup
+	var rl *rate.Limiter
+	if throttle > 0 {
+		rl = rate.NewLimiter(rate.Limit(throttle), 1)
+	}
+
+	for i := 0; i < conns; i++ {
+		wg.Add(1)
+		go fetchBinaryMessage(baseURL, ids, msgs, rl, &ctx, &wg)
+	}
+	wg.Wait()
+	close(msgs)
+	return err
+}
+
+func fetchBinaryMessage(baseURL string, ids chan *string, msgs chan<- *binaryMsg, lim *rate.Limiter, ctx *context.Context, wg *sync.WaitGroup) {
+	for id := range ids {
+		log.Infof("Fetching ID=%v", *id)
+		var err error
+		if lim != nil {
+			if err := lim.Wait(*ctx); err != nil {
+				log.Errorf("Got error rate limiting, %v", err.Error())
+				ids <- id
+				continue
+			}
+
+		}
+
+		reqURI, _ := generatePutURL(*id, baseURL)
+		req, err := http.NewRequest("GET", reqURI.String(), nil)
+		if err != nil {
+			log.Errorf("Got error creating NewRequest, %v", err.Error())
+			continue
+		}
+
+		req.Header.Set("User-Agent", Useragent)
+		resp, err := HttpClient.Do(req)
+		if err != nil {
+			log.Errorf("Got error making request, %v", err.Error())
+			resp.Body.Close()
+			continue
+		}
+
+		msg := &binaryMsg{
+			id:   id,
+			body: &resp.Body,
+			ct:   resp.Header.Get("Content-Type"),
+		}
+
+		msgs <- msg
+
+	}
+	wg.Done()
+}
 
 func PutAllRest(baseURL string, idProperty string, user string, pass string, conns int, dumpFailed bool) error {
 
@@ -120,10 +250,10 @@ func PutAllRest(baseURL string, idProperty string, user string, pass string, con
 }
 
 func DiffIDs(sourceURL, destURL string) error {
-	sourceIDs := make(chan string)
+	sourceIDs := make(chan *string)
 	go fetchIDList(sourceURL, sourceIDs)
 
-	destIDs := make(chan string)
+	destIDs := make(chan *string)
 	go fetchIDList(destURL, destIDs)
 
 	sources := make(map[string]struct{})
@@ -135,13 +265,13 @@ func DiffIDs(sourceURL, destURL string) error {
 			if !ok {
 				sourceIDs = nil
 			} else {
-				sources[sourceID] = struct{}{}
+				sources[*sourceID] = struct{}{}
 			}
 		case destID, ok := <-destIDs:
 			if !ok {
 				destIDs = nil
 			} else {
-				dests[destID] = struct{}{}
+				dests[*destID] = struct{}{}
 			}
 		}
 	}
@@ -363,6 +493,46 @@ func doDelete(destURL, id string) error {
 	return nil
 }
 
+func (rp *resourcePutter) putAllBinary(msgs <-chan *binaryMsg, failChan chan []byte, wg *sync.WaitGroup) {
+	for msg := range msgs {
+		putURL, err := generatePutURL(*msg.id, rp.baseURL)
+
+		if err != nil {
+			log.Errorf("generatePutURL Error=%v", err.Error())
+			if failChan != nil {
+				failChan <- []byte(*msg.id)
+			}
+			continue
+		}
+
+		var r io.Reader = *msg.body
+		err = rp.put(putURL.String(), r, msg.ct)
+
+		if err != nil {
+			log.Errorf("PUT putURL=%v, Error=%v", putURL, err.Error())
+			if failChan != nil {
+				failChan <- []byte(*msg.id)
+			}
+			(*msg.body).Close()
+			continue
+		}
+		(*msg.body).Close()
+	}
+	wg.Done()
+}
+
+func generatePutURL(id string, baseURL string) (putURL *url.URL, err error) {
+	if !strings.HasSuffix(baseURL, "/") {
+		baseURL = baseURL + "/"
+	}
+	putURL, err = url.Parse(baseURL)
+	if err != nil {
+		return
+	}
+	putURL, err = putURL.Parse(id)
+	return
+}
+
 func (rp *resourcePutter) putAll(resources <-chan resource, failChan chan []byte) error {
 	for r := range resources {
 		id := r[rp.idProperty]
@@ -375,19 +545,11 @@ func (rp *resourcePutter) putAll(resources <-chan resource, failChan chan []byte
 		if err != nil {
 			return err
 		}
-		b := rp.baseURL
-		if !strings.HasSuffix(b, "/") {
-			b = b + "/"
-		}
-		u, err := url.Parse(b)
+		u, err := generatePutURL(idStr, rp.baseURL)
 		if err != nil {
 			return err
 		}
-		u, err = u.Parse(idStr)
-		if err != nil {
-			return err
-		}
-		err = rp.put(u.String(), bytes.NewReader(msg))
+		err = rp.put(u.String(), bytes.NewReader(msg), "application/json")
 		if err != nil {
 			if failChan != nil {
 				failChan <- msg
@@ -399,33 +561,45 @@ func (rp *resourcePutter) putAll(resources <-chan resource, failChan chan []byte
 	return nil
 }
 
-func (rp *resourcePutter) put(url string, data io.Reader) error {
+func (rp *resourcePutter) put(url string, data io.Reader, contentType string) (err error) {
 	req, err := http.NewRequest("PUT", url, data)
 	if err != nil {
-		return err
+		return
 	}
 	req.Header.Set("User-Agent", Useragent)
+	req.Header.Set("Content-Type", contentType)
 
 	if rp.user != "" && rp.pass != "" {
 		req.SetBasicAuth(rp.user, rp.pass)
 	}
 	resp, err := HttpClient.Do(req)
 	if err != nil {
-		return err
+		return
 	}
 	contents, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return
 	}
 	resp.Body.Close()
 	if resp.StatusCode > 299 {
 		return fmt.Errorf("http fail: %v :\n%s\n", resp.Status, contents)
 	}
 
-	return nil
+	return
 }
 
-func GetAllRest(baseURL string, throttle int) error {
+func GetAllRest(baseURL string, throttle int) (err error) {
+	messages := make(chan string, 128)
+
+	go getAllRest(baseURL, throttle, messages)
+
+	for msg := range messages {
+		log.Info(msg)
+	}
+	return err
+}
+
+func getAllRest(baseURL string, throttle int, messages chan string) (err error) {
 	log.Infof("baseURL=%v throttle=%v", baseURL, throttle)
 	if baseURL == "" {
 		return errors.New("baseURL must be provided")
@@ -438,21 +612,15 @@ func GetAllRest(baseURL string, throttle int) error {
 	}
 	ticker := time.NewTicker(time.Second / time.Duration(throttle))
 
-	messages := make(chan string, 128)
-
 	go func() {
 		fetchAll(baseURL, messages, ticker)
 		close(messages)
 	}()
-
-	for msg := range messages {
-		log.Info(msg)
-	}
-	return nil
+	return err
 }
 
 func fetchAll(baseURL string, messages chan<- string, ticker *time.Ticker) {
-	ids := make(chan string, 128)
+	ids := make(chan *string, 128)
 	go fetchIDList(baseURL, ids)
 
 	readers := 32
@@ -472,7 +640,7 @@ func fetchAll(baseURL string, messages chan<- string, ticker *time.Ticker) {
 	readWg.Wait()
 }
 
-func fetchIDList(baseURL string, ids chan<- string) {
+func fetchIDList(baseURL string, ids chan<- *string) {
 
 	u, err := url.Parse(baseURL)
 	if err != nil {
@@ -508,16 +676,17 @@ func fetchIDList(baseURL string, ids chan<- string) {
 			}
 			log.Fatal(err)
 		}
-		ids <- le.ID
+		var id = le.ID
+		ids <- &id
 	}
 
 	close(ids)
 }
 
-func fetchMessages(baseURL string, messages chan<- string, ids <-chan string, ticker *time.Ticker) {
+func fetchMessages(baseURL string, messages chan<- string, ids <-chan *string, ticker *time.Ticker) {
 	for id := range ids {
 		<-ticker.C
-		req, err := http.NewRequest("GET", strings.Join([]string{baseURL, id}, ""), nil)
+		req, err := http.NewRequest("GET", strings.Join([]string{baseURL, *id}, ""), nil)
 		if err != nil {
 			panic(err)
 		}

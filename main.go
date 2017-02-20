@@ -33,6 +33,25 @@ func main() {
 
 	})
 
+	app.Command("put-binary-resources", "Read IDS from one endpoint and PUT them to another endpoint", func(cmd *cli.Cmd) {
+		user := cmd.StringOpt("user", "", "user for basic auth")
+		pass := cmd.StringOpt("pass", "", "password for basic auth")
+		dumpFailed := cmd.BoolOpt("dump-failed", false, "dump failed resources to stdout, instead of exiting on failure")
+		concurrency := cmd.IntOpt("concurrency", 16, "number of concurrent requests to use")
+		throttle := cmd.IntOpt("throttle", 0, "number of PUT requests to make a second")
+		fromBaseURL := cmd.StringArg("FROM_BASEURL", "", "base URL to PUT resources to")
+		toBaseURL := cmd.StringArg("TO_BASEURL", "", "base URL to PUT resources to")
+		cmd.Action = func() {
+			if *socksProxy != "" {
+				dialer, _ := proxy.SOCKS5("tcp", *socksProxy, nil, proxy.Direct)
+				restutil.Transport.Dial = dialer.Dial
+			}
+			if err := restutil.PutAllBinaryRest(*fromBaseURL, *toBaseURL, *user, *pass, *concurrency, *throttle, *dumpFailed); err != nil {
+				log.Fatal(err)
+			}
+		}
+	})
+
 	app.Command("dump-resources", "Read JSON resources from an endpoint and dump them to stdout", func(cmd *cli.Cmd) {
 		baseURL := cmd.StringArg("BASEURL", "", "base URL to GET resources from. Must contain a __ids resource")
 		throttle := cmd.IntOpt("throttle", 10, "Limit request rate for resource GET requests (requests per second)")
