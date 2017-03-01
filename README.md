@@ -52,3 +52,10 @@ Creates or deletes resources in destination collection based on differences from
 up-restutil sync-ids http://localhost/foo/ http://localhost/bar/
 ```
 Progress is shown during sync.  By default, deletion is not enabled in the destination during syncing, only creation. To enable delete, use --deletes=true 
+
+# The 'put-binary-resources' sub-command
+This behaves like the `concept-publisher`, it gets a list of IDs from one endpoint. It will then make a request for each ID and will then make a `PUT` request with the content of the body to another endpoint. An `__ids` endpoint is required from the "from" endpoint. It will then `PUT` the request at `toBaseURL/<UUID>`. This command does not care about the body content. It will just make a PUT request without parsing the body.
+
+```
+up-restutil put-binary-resources --user=username --pass=password --dump-failed=true --concurrency=10 --throttle=20 http://localhost/from/ http://localhost/to/
+```

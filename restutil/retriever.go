@@ -1,4 +1,4 @@
-package main
+package restutil
 
 import (
 	"bufio"
@@ -11,13 +11,15 @@ import (
 	"regexp"
 )
 
+const Useragent = "up-restutil"
+
 var uuidPattern = regexp.MustCompile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
-func getIDListRetriever(filePath string, URL string) IDListRetriever {
+func GetIDListRetriever(filePath string, URL string) IDListRetriever {
 	if filePath != "" {
 		return newFileBasedIDListRetriever(filePath)
 	}
-	return newURLBasedIDListRetriever(URL, httpClient)
+	return newURLBasedIDListRetriever(URL, HttpClient)
 }
 
 func newFileBasedIDListRetriever(filePath string) *fileBasedIDListRetriever {
@@ -86,7 +88,7 @@ func (r *urlBasedIDListRetriever) Retrieve(ids chan<- string, errChan chan<- err
 		errChan <- fmt.Errorf("ERROR - %s", err)
 		return
 	}
-	req.Header.Set("User-Agent", useragent)
+	req.Header.Set("User-Agent", Useragent)
 	resp, err := r.client.Do(req)
 	if err != nil {
 		errChan <- fmt.Errorf("ERROR - %s", err)

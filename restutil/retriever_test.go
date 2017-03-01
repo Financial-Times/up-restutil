@@ -1,4 +1,4 @@
-package main
+package restutil
 
 import (
 	"errors"
